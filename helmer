@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+_echoerr() {
+  2>&1 echo "$@"
+}
+_err() {
+  _echoerr "err: $@"
+  exit 1
+}
+
+subcommand="${1:-}"
+case $subcommand in
+  diff)
+    for dep in curl diff grep; do
+      if ! >/dev/null command -v $dep; then
+        _err "$dep required"
+      fi
+    done
+
+    lines=$(
+      curl -sfL $3 | diff - $2 || true
+    )
+    IFS='
+'
+    for line in $lines; do
+      if echo $line | >/dev/null grep -E '^\d+'; then
+        printf "\n\n"
+      fi
+      echo "$line"
+    done
+  ;;
+  apply)
+    for dep in envsubst helm kubectl; do
+      if ! >/dev/null command -v $dep; then
+        _err "$dep required"
+      fi
+    done
+
+    repository=$2
+    name=$3
+    version=$4
+    instance=$5
+
+    helm repo add $name --force-update $repository
+    helm repo update
+
+    while true; do
+      cat | envsubst | tee /dev/stderr \
+        | helm upgrade --install \
+          $instance $name/$name \
+          --create-namespace --namespace $instance \
+          --version $version \
+          --values - && break
+
+      kubectl delete secret -n "$instance" --field-selector type=helm.sh/release.v1 -l owner=helm --ignore-not-found
+      sleep 1
+    done
+  ;;
+  *)
+    _err "?"
+  ;;
+esac
