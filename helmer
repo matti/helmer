@@ -30,6 +30,10 @@ case $subcommand in
       echo "$line"
     done
   ;;
+  delete)
+    instance=$2
+    helm delete -n $instance $instance
+  ;;
   apply)
     for dep in envsubst helm kubectl; do
       if ! >/dev/null command -v $dep; then
@@ -43,7 +47,7 @@ case $subcommand in
     instance=$5
 
     helm repo add $name --force-update $repository
-    helm repo update
+    helm repo update $name
 
     while true; do
       cat | envsubst | tee /dev/stderr \
