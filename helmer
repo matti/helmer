@@ -5,13 +5,43 @@ _echoerr() {
   2>&1 echo "$@"
 }
 _err() {
-  _echoerr "err: $@"
+  _echoerr "err: $*"
   exit 1
 }
+_println() {
+  1>&2 printf "$*\n"
+}
 
+_manifest() {
+  manifest_path=$1
+  case $manifest_path in
+    */helmer.yml)
+      :
+    ;;
+    *)
+      manifest_path="$manifest_path/helmer.yml"
+    ;;
+  esac
+
+  manifest=$(cat "$manifest_path")
+  MANIFEST_VERSION=$(echo "$manifest" | yq -e '.version')
+  MANIFEST_CHART_REPOSITORY=$(echo "$manifest" | yq -e '.chart.repository')
+  MANIFEST_CHART_NAME=$(echo "$manifest" | yq -e '.chart.name')
+  MANIFEST_CHART_VERSION=$(echo "$manifest" | yq -e '.chart.version')
+  manifest_chart_values_template=$(echo "$manifest" | yq -e '.chart.values')
+
+  MANIFEST_CHART_VALUES=$(echo "$manifest_chart_values_template" | CHART_VERSION="$MANIFEST_CHART_VERSION" envsubst)
+
+  export MANIFEST_VERSION MANIFEST_CHART_REPOSITORY MANIFEST_CHART_NAME MANIFEST_CHART_VERSION MANIFEST_CHART_VALUES
+}
 subcommand="${1:-}"
+instance_path=$2
+instance=$(basename "$instance_path")
+
 case $subcommand in
   diff)
+    _manifest "$instance_path"
+
     for dep in curl diff grep; do
       if ! >/dev/null command -v $dep; then
         _err "$dep required"
@@ -19,46 +49,72 @@ case $subcommand in
     done
 
     lines=$(
-      curl -sfL $3 | diff - $2 || true
+      curl -sfL "$MANIFEST_CHART_VALUES" | diff - "$instance_path/values.yml" || true
     )
     IFS='
 '
     for line in $lines; do
-      if echo $line | >/dev/null grep -E '^\d+'; then
+      if echo "$line" | >/dev/null grep -E '^\d+'; then
         printf "\n\n"
       fi
       echo "$line"
     done
   ;;
+  get)
+    while true; do
+      output=$(helm list -n "$instance" -q) && break
+      sleep 1
+    done
+
+    if [ "$output" = "" ]; then
+      exit 1
+    else
+      echo "$output"
+    fi
+  ;;
   delete)
-    instance=$2
-    helm delete -n $instance $instance
+    while true; do
+      $0 get "$instance" || break
+      helm delete -n "$instance" "$instance" || true
+    done
+
+    while true; do
+      kubectl delete namespace --ignore-not-found "$instance" && break
+    done
   ;;
   apply)
+    _manifest "$2"
+
     for dep in envsubst helm kubectl; do
       if ! >/dev/null command -v $dep; then
         _err "$dep required"
       fi
     done
 
-    repository=$2
-    name=$3
-    version=$4
-    instance=$5
-
-    helm repo add $name --force-update $repository
-    helm repo update $name
+    while true; do
+      helm repo add "$MANIFEST_CHART_NAME" --force-update "$MANIFEST_CHART_REPOSITORY" && break
+      sleep 1
+    done
 
     while true; do
-      cat | envsubst | tee /dev/stderr \
-        | helm upgrade --install \
-          $instance $name/$name \
-          --create-namespace --namespace $instance \
-          --version $version \
+      helm repo update "$MANIFEST_CHART_NAME" && break
+      sleep 1
+    done
+
+    values=$(envsubst < "$instance_path/values.yml")
+    echo "$values"
+
+    while true; do
+      echo "$values" | helm upgrade --install \
+          "$instance" "$MANIFEST_CHART_NAME/$MANIFEST_CHART_NAME" \
+          --create-namespace --namespace "$instance" \
+          --version "$MANIFEST_CHART_VERSION" \
           --values - && break
 
-      kubectl delete secret -n "$instance" --field-selector type=helm.sh/release.v1 -l owner=helm --ignore-not-found
-      sleep 1
+      while true; do
+        kubectl delete secret -n "$instance" --field-selector type=helm.sh/release.v1 -l owner=helm --ignore-not-found && break
+        sleep 1
+      done
     done
   ;;
   *)
