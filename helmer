@@ -28,11 +28,12 @@ _manifest() {
   MANIFEST_CHART_REPOSITORY=$(echo "$manifest" | yq -e '.chart.repository')
   MANIFEST_CHART_NAME=$(echo "$manifest" | yq -e '.chart.name')
   MANIFEST_CHART_VERSION=$(echo "$manifest" | yq -e '.chart.version')
+  MANIFEST_APP_VERSION=$(echo "$manifest" | yq '.app.version')
   manifest_chart_values_template=$(echo "$manifest" | yq -e '.chart.values')
 
-  MANIFEST_CHART_VALUES=$(echo "$manifest_chart_values_template" | CHART_VERSION="$MANIFEST_CHART_VERSION" envsubst)
+  MANIFEST_CHART_VALUES=$(echo "$manifest_chart_values_template" | APP_VERSION="$MANIFEST_APP_VERSION" CHART_VERSION="$MANIFEST_CHART_VERSION" envsubst)
 
-  export MANIFEST_VERSION MANIFEST_CHART_REPOSITORY MANIFEST_CHART_NAME MANIFEST_CHART_VERSION MANIFEST_CHART_VALUES
+  export MANIFEST_VERSION MANIFEST_CHART_REPOSITORY MANIFEST_CHART_NAME MANIFEST_CHART_VERSION MANIFEST_APP_VERSION MANIFEST_CHART_VALUES
 }
 subcommand="${1:-}"
 instance_path=$2
